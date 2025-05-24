@@ -46,7 +46,7 @@ Este proyecto permite renderizar tiendas personalizadas (tipo `tienda1.fasttify.
 ## 🧩 ¿Cómo funciona?
 
 1. Usuario entra a `tienda1.fasttify.com`.
-2. Amplify SSR redirige a `/api/render`.
+2. Next.js SSR redirige a `/api/render`.
 3. Se detecta el subdominio (`tienda1`).
 4. Se buscan los datos y plantilla correspondiente en DynamoDB.
 5. Se renderiza el HTML usando LiquidJS con base en `base.liquid` + plantilla hija.
