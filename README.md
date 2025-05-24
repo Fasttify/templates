@@ -177,22 +177,15 @@ Ejemplo de ítem:
 
 ---
 
-## 🌐 Subdominios personalizados
-
-* Configura un registro DNS `*.fasttify.com` que apunte al dominio principal de Amplify
-* Asegúrate de que Amplify tenga habilitado **SSR**
-
----
-
 ## 🧪 Test rápido
 
-Visita:
+Visitar:
 
 ```
 https://tienda1.fasttify.com
 ```
 
-Y verás la tienda renderizada con su plantilla y datos únicos.
+Y debe verse la tienda renderizada con su plantilla y datos únicos.
 
 ---
 
