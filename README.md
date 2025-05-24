@@ -1,6 +1,6 @@
 
 
----
+
 
 # 🧪 Fasttify: Sistema de Tiendas con Plantillas Dinámicas
 
@@ -203,5 +203,5 @@ Y verás la tienda renderizada con su plantilla y datos únicos.
 * Editor visual para modificar plantillas
 * Multilenguaje en los datos
 
----
+
 
