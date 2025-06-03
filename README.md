@@ -1,7 +1,4 @@
 
-
-
-
 # 🧪 Fasttify: Sistema de Tiendas con Plantillas Dinámicas
 
 Renderiza tiendas personalizadas como `tienda1.fasttify.com`, usando LiquidJS y plantillas heredadas desde una base común almacenada en S3, renderizadas dinámicamente en tiempo real con Next.js 15 y AWS Amplify.
@@ -11,9 +8,9 @@ Renderiza tiendas personalizadas como `tienda1.fasttify.com`, usando LiquidJS y 
 ## 🛠 Tecnologías usadas
 
 * **Next.js 15 (App Router, SSR)**
-* **LiquidJS** para plantillas heredadas (`base.liquid`)
-* **AWS S3** para almacenamiento de plantillas
-* **AWS DynamoDB** para datos por tienda
+* **LiquidJS** para plantillas heredadas (`base.liquid`) y bloques dinámicos
+* **AWS S3** para almacenamiento de plantillas y secciones
+* **AWS DynamoDB** para datos por tienda (estructura por secciones)
 * **Amplify Hosting + SSR**
 * **AWS SDK v3** (`@aws-sdk/client-s3`, `@aws-sdk/client-dynamodb`)
 
@@ -26,11 +23,12 @@ Renderiza tiendas personalizadas como `tienda1.fasttify.com`, usando LiquidJS y 
    └── page.tsx            ← Entrada principal
 📁 /lib
    └── render.ts           ← Lógica SSR que obtiene y renderiza la tienda
-📁 /liquid                 ← Local dev (mock de plantillas)
+📁 /liquid/secciones       ← Plantillas por sección: hero.liquid, productos.liquid, etc.
 
 🪣 AWS S3
    - fasttify-base-plantillas/base.liquid
-   - fasttify-tiendas/tienda1/home.liquid
+   - fasttify-secciones/hero.liquid
+   - fasttify-secciones/productos.liquid
 
 🗃️ DynamoDB
    Tabla: FasttifyTiendas
@@ -41,36 +39,64 @@ Renderiza tiendas personalizadas como `tienda1.fasttify.com`, usando LiquidJS y 
 ## 🔁 Flujo de funcionamiento
 
 1. Usuario entra a `tienda1.fasttify.com`
-2. Next.js 15 (SSR con App Router) detecta el dominio
-3. Se hace SSR en el servidor:
+2. Next.js 15 (SSR) detecta el dominio
+3. Se consulta DynamoDB:
 
-   * Busca en DynamoDB los datos y la plantilla
-   * Descarga la plantilla de S3
-   * Usa `base.liquid` como layout base
-   * Renderiza con LiquidJS
-4. Devuelve el HTML
+   * Lista ordenada de secciones (`tipo`, `settings`)
+4. Se renderiza cada sección desde S3 usando LiquidJS
+5. El HTML resultante se inserta dentro de `base.liquid`
 
 ---
 
-## 🧩 Código
+## 🧠 DynamoDB: Datos por tienda
 
-### `/app/page.tsx`
-
-```tsx
-import { renderTienda } from '@/lib/render';
-
-export default async function Page() {
-  const html = await renderTienda();
-
-  return (
-    <div dangerouslySetInnerHTML={{ __html: html }} />
-  );
+```json
+{
+  "dominio": { "S": "tienda1.fasttify.com" },
+  "secciones": {
+    "S": JSON.stringify([
+      {
+        "tipo": "hero",
+        "settings": {
+          "titulo": "Bienvenido a mi tienda",
+          "descripcion": "Los mejores productos"
+        }
+      },
+      {
+        "tipo": "productos",
+        "settings": {
+          "titulo": "Nuestros productos"
+        }
+      }
+    ])
+  }
 }
 ```
 
 ---
 
-### `/lib/render.ts`
+## 🧩 Ejemplo de sección: `hero.liquid`
+
+```liquid
+<section class="hero">
+  <h1>{{ section.settings.titulo }}</h1>
+  <p>{{ section.settings.descripcion }}</p>
+</section>
+
+{% schema %}
+{
+  "name": "Hero",
+  "settings": [
+    { "type": "text", "id": "titulo", "label": "Título", "default": "Título por defecto" },
+    { "type": "text", "id": "descripcion", "label": "Descripción", "default": "Descripción por defecto" }
+  ]
+}
+{% endschema %}
+```
+
+---
+
+## `/lib/render.ts` actualizado (por secciones)
 
 ```ts
 import { Liquid } from 'liquidjs';
@@ -85,15 +111,11 @@ const engine = new Liquid({
   extname: '.liquid',
   fs: {
     async readFile(filepath) {
-      const bucket = filepath === 'base.liquid'
-        ? 'fasttify-base-plantillas'
-        : 'fasttify-tiendas';
+      const [bucket, key] = filepath.startsWith('base.liquid')
+        ? ['fasttify-base-plantillas', 'base.liquid']
+        : ['fasttify-secciones', filepath];
 
-      const res = await s3.send(new GetObjectCommand({
-        Bucket: bucket,
-        Key: filepath
-      }));
-
+      const res = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
       return await res.Body!.transformToString();
     },
     async exists() {
@@ -113,88 +135,49 @@ export async function renderTienda(): Promise<string> {
 
   if (!Item) return `<h1>Tienda no encontrada</h1>`;
 
-  const templateKey = Item.templateKey.S!;
-  const datos = JSON.parse(Item.datos.S!);
+  const secciones = JSON.parse(Item.secciones.S!);
+  const bloquesHtml: string[] = [];
 
-  return await engine.renderFile(templateKey, datos);
+  for (const bloque of secciones) {
+    const html = await engine.renderFile(`${bloque.tipo}.liquid`, {
+      section: { settings: bloque.settings }
+    });
+    bloquesHtml.push(html);
+  }
+
+  const layoutHtml = await engine.renderFile('base.liquid', {
+    contenido: bloquesHtml.join('\n')
+  });
+
+  return layoutHtml;
 }
 ```
 
 ---
 
-## 🧪 Plantillas en S3
-
-### Bucket: `fasttify-base-plantillas`
-
-Archivo `base.liquid`:
+## 🧪 base.liquid en S3
 
 ```liquid
 <!DOCTYPE html>
 <html>
-  <head><title>{{ tienda }}</title></head>
+  <head>
+    <title>Fasttify</title>
+  </head>
   <body>
-    {% block contenido %}{% endblock %}
+    {{ contenido }}
   </body>
 </html>
 ```
 
 ---
 
-### Bucket: `fasttify-tiendas`
+## 🚀 Próximas mejoras
 
-Archivo `tienda1/home.liquid`:
-
-```liquid
-{% extends 'base.liquid' %}
-
-{% block contenido %}
-  <h1>{{ tienda }}</h1>
-  <ul>
-    {% for producto in productos %}
-      <li>{{ producto.nombre }} - ${{ producto.precio }}</li>
-    {% endfor %}
-  </ul>
-{% endblock %}
-```
-
----
-
-## 🧠 DynamoDB
-
-Tabla: `FasttifyTiendas`
-
-Ejemplo de ítem:
-
-```json
-{
-  "dominio": { "S": "tienda1.fasttify.com" },
-  "templateKey": { "S": "tienda1/home.liquid" },
-  "datos": {
-    "S": "{\"tienda\": \"La tienda de Juan\", \"productos\": [{\"nombre\": \"Gorra\", \"precio\": 25000}]}"
-  }
-}
-```
-
----
-
-## 🧪 Test rápido
-
-Visitar:
-
-```
-https://tienda1.fasttify.com
-```
-
-Y debe verse la tienda renderizada con su plantilla y datos únicos.
-
----
-
-## 🚀 Mejores prácticas y mejoras futuras
-
-* Separar bloques de diseño en componentes Liquid
-* Agregar variables globales (colores, fuentes) por tienda
-* Editor visual para modificar plantillas
-* Multilenguaje en los datos
-
+✅ Separación de secciones editable tipo Shopify
+✅ Uso de `{% schema %}` para el editor visual
+🛠 Editor visual tipo arrastrar y soltar (drag & drop)
+🧩 Variables de diseño global (fuentes, colores, etc.)
+🌎 Multilenguaje por tienda
+🔐 Autenticación para el editor
 
 
