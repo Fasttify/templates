@@ -28,7 +28,7 @@ En este ejemplo se especifica `IndexName: "customDomain-index"` para indicar el 
 
 ## Configuración de layout (JSON de secciones)
 
-Dentro de los datos de la tienda (por ejemplo en `onboardingData.layout` de **UserStore**) se almacena la configuración del *layout* en formato JSON compatible con Shopify 2.0. Este JSON contiene un objeto `sections` con las secciones de la página y sus `settings`, y un arreglo `order` con los IDs de sección en el orden de renderizado. Por ejemplo:
+Dentro de los datos de la tienda (por ejemplo en ` templateData: a.json()` de **StoreTemplate**) se almacena la configuración del *layout* en formato JSON compatible con Shopify 2.0. Este JSON contiene un objeto `sections` con las secciones de la página y sus `settings`, y un arreglo `order` con los IDs de sección en el orden de renderizado. Por ejemplo:
 
 ```json
 {
