@@ -1,157 +1,209 @@
 
-# Fasttify: Sistema de tiendas headless con LiquidJS y AWS
+# Fasttify: Tienda Headless con LiquidJS, Next.js y AWS
 
-Fasttify es un sistema headless para crear tiendas dinámicas basado en LiquidJS y servicios AWS (DynamoDB, S3, etc.), inspirado en la arquitectura de Shopify Online Store 2.0. Sigue el modelo de *JSON templates* de Shopify – cada página se define mediante un JSON de secciones ordenadas – y usa plantillas Liquid para el marcado. Por ejemplo, en Shopify cada tema tiene layouts, templates, secciones y bloques que interactúan; Fasttify adapta esto usando Next.js y AWS.
+## Visión general
 
-## Flujo de renderizado y detección de tienda
+Fasttify es un sistema **headless** de comercio electrónico multi-tenant que combina Next.js, LiquidJS y servicios de AWS. Cada tienda se accede mediante un subdominio personalizado, y la apariencia del sitio se define mediante plantillas al estilo de Shopify Online Store 2.0 (con layouts, secciones, bloques y esquemas JSON). Los datos de productos y colecciones se almacenan en **DynamoDB**, mientras que las plantillas Liquid (`.liquid`) se guardan en **AWS S3**.
 
-Cuando un cliente navega a un subdominio personalizado (por ejemplo `tienda1.fasttify.com`), una función del servidor Next.js obtiene el nombre de host de la petición HTTP usando la API de cabeceras. Por ejemplo:
+## Arquitectura inspirada en Shopify Online Store 2.0
 
-```js
-import { headers } from 'next/headers';
-const host = headers().get('host');  // p.ej. 'tienda1.fasttify.com'
-```
+La arquitectura de Fasttify se inspira en los temas de Shopify Online Store 2.0. Cada tienda dispone de un **layout base** (p. ej. `theme.liquid`) que incluye el HTML común (cabecera, pie de página, etc.) y usa los objetos Liquid `{{ content_for_header }}` y `{{ content_for_layout }}` para insertar los contenidos específicos de cada página. Este layout base actúa como envoltorio en el que se renderizan las secciones dinámicas.
 
-Este fragmento de Next.js (App Router) extrae el dominio actual. A continuación, Fasttify consulta la tabla **UserStore** en DynamoDB usando un índice secundario global (GSI) sobre el campo `customDomain`. Un ejemplo de query en TypeScript podría ser:
+El diseño de la página se describe mediante un archivo **JSON de template** (similar a los JSON templates de Shopify). Este JSON especifica el nombre del layout base y las secciones a renderizar en orden. Por ejemplo, el JSON raíz contiene atributos como `layout` (nombre del layout base o `false`), `sections` (definición de cada sección) y `order` (array con el orden de IDs). El campo `layout` indica el archivo de layout a usar (por ejemplo `"theme"` para `layout/theme.liquid`), mientras que `sections` es un objeto cuyos valores incluyen el tipo de sección y sus configuraciones, y `order` lista las secciones en el orden en que deben mostrarse.
 
-```ts
-import { cookiesClient } from '@/utils/AmplifyUtils'
-
-async function checkDomain(customDomain: string) {
-  try {
-    const { data: stores } = await cookiesClient.models.UserStore.listUserStoreByCustomDomain({
-      customDomain: customDomain,
-    })
-```
-
-En este ejemplo se especifica `IndexName: "customDomain-index"` para indicar el GSI apropiado. El resultado devuelve el registro de la tienda asociada a ese dominio, que incluye el `storeId` y la configuración de onboarding. (Usar un **Global Secondary Index** es una práctica común en DynamoDB para consultas rápidas por un atributo no clave, como `customDomain`.)
-
-## Configuración de layout (JSON de secciones)
-
-Dentro de los datos de la tienda (por ejemplo en ` templateData: a.json()` de **StoreTemplate**) se almacena la configuración del *layout* en formato JSON compatible con Shopify 2.0. Este JSON contiene un objeto `sections` con las secciones de la página y sus `settings`, y un arreglo `order` con los IDs de sección en el orden de renderizado. Por ejemplo:
-
-```json
-{
-  "layout": "full-width",
-  "sections": {
-    "hero": {
-      "type": "hero",
-      "settings": { "title": "Bienvenido", "image": "hero.jpg" }
-    },
-    "featured": {
-      "type": "featured-products",
-      "settings": { "count": 4 }
-    }
-  },
-  "order": ["hero", "featured"]
-}
-```
-
-Según la documentación de Shopify, los JSON templates almacenan “una lista de secciones para renderizar y sus settings” y el array `order` indica el orden de renderizado. Fasttify usa este JSON para saber qué secciones cargar del tema: el objeto `sections` mapea cada sección a sus datos y el array `order` determina la secuencia en que se renderizan.
-
-## Renderizado dinámico con LiquidJS
-
-Para generar el HTML final, Fasttify emplea **LiquidJS**, un motor de plantillas compatible con Liquid de Shopify. Se define un layout base (`base.liquid`, similar a `theme.liquid` de Shopify) que incluye el contenido común (HTML, encabezado, pie, etc.). En este archivo base se insertan marcadores de posición (p.ej. `{{ content_for_layout }}` o tags `{% include %}`) donde se inyectarán las secciones dinámicas.
-
-Luego, el código JavaScript inicializa LiquidJS y carga las plantillas. Por ejemplo:
-
-```js
-import { Liquid } from 'liquidjs';
-const engine = new Liquid({ root: '/path/to/sections/', extname: '.liquid' });
-// Renderizar la sección "hero"
-const htmlHero = await engine.renderFile('hero', { settings: { title: 'Hola Mundo' } });
-```
-
-Este fragmento carga `hero.liquid` desde el directorio de secciones y la procesa con los datos (`settings`) dados. De forma similar, se renderiza `base.liquid` pasando un contexto que contenga los contenidos renderizados de cada sección. LiquidJS soporta etiquetas como `{% include %}`, bloques y filtros al estilo Shopify, permitiendo construir la página completa a partir de las secciones dinámicas.
-
-## Integración con Productos y Colecciones
-
-Muchas secciones presentan datos del catálogo. Fasttify conecta con tablas DynamoDB separadas, p.ej. **Product** y **Collection**, filtrando por el `storeId` obtenido del **UserStore**. Por ejemplo, la tabla *Product* puede tener un atributo `storeId` en su clave de partición, de modo que una query como `KeyConditionExpression: 'storeId = :id'` devuelve todos los productos de esa tienda. Este patrón multitenant (aislar datos por tienda) es común en DynamoDB. Al renderizar una sección como `featured-products`, Fasttify obtiene los productos reales (`title`, `price`, `image`, etc.) de DynamoDB y los pasa al contexto Liquid. De forma análoga, la tabla *Collection* puede listar los IDs de producto asociados a una colección. En resumen, cada sección dinámica carga los datos reales necesarios desde la base de datos usando `storeId` como filtro, e inyecta esos datos en la plantilla Liquid para mostrarlos.
-
-## Estructura de archivos y temas en S3
-
-Las plantillas (.liquid) del tema se almacenan en AWS S3, organizadas por tienda. Por convención (siguiendo la estructura de Shopify) existirían carpetas como `layout/` y `sections/`. Por ejemplo, podríamos tener en S3:
-
-```
-fasttify-themes/
-└── <storeId>/
-    ├── layout/
-    │   └── base.liquid
-    └── sections/
-        ├── hero.liquid
-        ├── featured-products.liquid
-        └── ... 
-```
-
-En tiempo de ejecución, el backend descarga estos archivos usando AWS SDK. Por ejemplo, en JavaScript:
-
-```js
-import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
-const client = new S3Client({});
-const bucketName = "fasttify-themes";
-const key = `${storeId}/sections/hero.liquid`;
-const { Body } = await client.send(new GetObjectCommand({ Bucket: bucketName, Key: key }));
-const liquidTemplate = await new Response(Body).text();
-```
-
-Este código usa `GetObjectCommand` para obtener `hero.liquid` del bucket. Luego `liquidTemplate` (que contiene el texto Liquid) se pasa a `engine.parseAndRender` o `render` de LiquidJS junto con los datos para producir el HTML. De este modo, Fasttify puede almacenar cada tema de usuario en S3 y cargar dinámicamente solo los archivos necesarios.
-
-## Tipos en TypeScript
-
-Se definen interfaces para tipar los datos principales. Por ejemplo:
-
-```ts
-interface SectionData {
-  type: string;
-  settings: Record<string, any>;
-}
-interface LayoutJSON {
-  layout: string | false;
-  sections: Record<string, SectionData>;
-  order: string[];
-}
-interface UserStore {
-  storeId: string;
-  customDomain: string;
-  onboardingData: { layout: LayoutJSON };
-  // ...otros campos...
-}
-interface Product {
-  id: string;
-  storeId: string;
-  title: string;
-  price: number;
-  // ...otros campos...
-}
-interface Collection {
-  id: string;
-  storeId: string;
-  title: string;
-  productIds: string[];
-  // ...otros campos...
-}
-```
-
-Estas interfaces ilustran cómo tipar los registros de DynamoDB: `UserStore` para la tienda y su configuración, `LayoutJSON` para el JSON de layout, y `Product`/`Collection` para elementos del catálogo. El soporte de TypeScript asegura coherencia al manejar estos objetos en el código.
-
-## Editor visual y esquema de secciones
-
-Fasttify admite un editor visual de temas basado en los esquemas de sección (como en Shopify 2.0). Cada archivo de sección `.liquid` incluye un bloque `{% schema %}` con metadatos JSON (nombre de la sección, tipos de ajustes, bloques, presets, etc.). Por ejemplo, `hero.liquid` podría declarar:
+Las **secciones** son fragmentos `.liquid` independientes que se renderizan dinámicamente. Cada sección puede incluir dentro de su archivo un bloque `{% schema %}` con un esquema JSON que define sus opciones (settings) y bloques. Esto permite personalizar los contenidos desde un editor visual. Por ejemplo, el archivo `sections/hero.liquid` podría ser:
 
 ```liquid
+<div class="hero">
+  <h1>{{ section.settings.heading }}</h1>
+  <p>{{ section.settings.subheading }}</p>
+</div>
+
 {% schema %}
 {
-  "name": "Hero",
+  "name": "Hero Section",
   "settings": [
-    { "type": "text",  "id": "title", "label": "Título" },
-    { "type": "color", "id": "bg_color", "label": "Color de fondo" }
+    { "type": "text", "id": "heading", "label": "Encabezado",   "default": "Bienvenido" },
+    { "type": "text", "id": "subheading", "label": "Subtítulo",    "default": "Descripción" }
   ]
 }
 {% endschema %}
 ```
 
-Este JSON dentro de `{% schema %}` indica al editor qué opciones mostrar. Fasttify puede leer este esquema para generar formularios de configuración visual donde el administrador ajusta los `settings` de cada sección sin escribir código. En conjunto, esto permite emular la experiencia de personalización de Shopify: el usuario reordena secciones y edita sus opciones mediante la interfaz gráfica, mientras que Fasttify almacena esos cambios en el JSON de layout y vuelve a renderizar la tienda dinámicamente.
+En este ejemplo la sección **Hero** define un encabezado y un párrafo que usan `section.settings.heading` y `section.settings.subheading`. El bloque `{% schema %}` describe dos campos editables de tipo texto. Fasttify leerá estos valores (por defecto o personalizados) del JSON del layout y los pasará al motor Liquid para generar el HTML dinámico.
 
-**Resumen:** Fasttify combina la detección de dominio (Next.js), almacenamiento en DynamoDB de la configuración de tienda, archivos Liquid en S3 y renderizado con LiquidJS para crear páginas de tienda dinámicas. Usa `storeId` como identificador de tienda (multitenancy), tipado TypeScript y esquemas de sección para ofrecer una experiencia similar a Shopify Online Store 2.0 en un stack moderno con AWS.
+## Detección de la tienda por dominio
 
+Al llegar una petición a Fasttify, se determina la tienda activa a partir del dominio o subdominio de la URL. En Next.js esto se suele hacer en `getServerSideProps`, leyendo la cabecera `Host`. Por ejemplo:
 
+```ts
+  import { headers } from 'next/headers';
+  const domain = headers().get('host');  // p.ej. 'tienda1.fasttify.com'
+
+  // Buscar la tienda cuyo customDomain coincide
+  const stores = await cookiesClient.models.UserStore.listUserStoreByCustomDomain(domain);
+  const store = stores?.[0];
+  if (!store) {
+    // Redirigir o mostrar 404 si no se encuentra la tienda
+    return { notFound: true };
+  }
+  // Aquí ya tenemos store.id para usar en las siguientes consultas...
+  return { props: { storeId: store.id } };
+}
+```
+
+Este código usa headers  (SSR) para manejar cada petición en el servidor. Con `cookiesClient.models.UserStore.listUserStoreByCustomDomain(domain)` se obtiene la entidad **UserStore** cuyo campo `customDomain` coincide con el dominio recibido. Si existe, `store.id` se usa luego para cargar el layout y los datos asociados a esa tienda.
+
+## Modelos de datos (TypeScript)
+
+Los principales modelos de datos en Fasttify se tipan en TypeScript como sigue:
+
+```ts
+interface UserStore {
+  id: string;           // ID único de la tienda
+  name: string;         // Nombre de la tienda
+  customDomain: string; // Dominio personalizado (e.g. tienda.ejemplo.com)
+  // ...otros campos de configuración de la tienda
+}
+
+interface Product {
+  id: string;           // ID del producto
+  storeId: string;      // Referencia a UserStore.id
+  title: string;        // Título del producto
+  description?: string; // Descripción
+  price: number;        // Precio
+  imageUrl?: string;    // URL de imagen
+  // ...otros campos adicionales
+}
+
+interface Collection {
+  id: string;           // ID de la colección
+  storeId: string;      // Referencia a UserStore.id
+  title: string;        // Nombre de la colección
+  productIds: string[]; // IDs de productos incluidos
+  // ...otros campos adicionales
+}
+
+interface SectionData {
+  type: string;             // Nombre de la plantilla de sección (archivo .liquid)
+  settings: Record<string, any>;  // Configuraciones de la sección según JSON
+  blocks?: any[];           // Bloques opcionales definidos en schema
+}
+
+interface LayoutJSON {
+  layout?: string;             // Nombre del layout base (p.ej. "theme"), o false
+  sections: Record<string, SectionData>; // Secciones por ID
+  order: string[];             // IDs de secciones en el orden a renderizar
+}
+```
+
+Aquí `LayoutJSON` modela el JSON que viene de la entidad **StoreTemplate** (campo `templateData`). Cada sección referenciada en `LayoutJSON.sections` corresponde a un archivo `.liquid` en S3.
+
+## Flujo de renderizado
+
+### Obtención del layout y datos
+
+Una vez identificada la tienda activa, se carga su configuración de tema desde la base de datos. Por ejemplo:
+
+```ts
+const [template] = await cookiesClient.models.StoreTemplate.listStoreTemplateByStoreId(storeId);
+const layoutJSON = JSON.parse(template.templateData) as LayoutJSON;
+```
+
+El objeto `layoutJSON` contiene el nombre del layout base (`layoutJSON.layout`) y los detalles de cada sección (`layoutJSON.sections` y `layoutJSON.order`).
+
+A continuación, se obtienen los datos de negocio necesarios: los productos y colecciones de la tienda, almacenados en DynamoDB. Por ejemplo:
+
+```ts
+const products = await cookiesClient.models.Product.listProductsByStoreId(storeId);
+const collections = await cookiesClient.models.Collection.listCollectionsByStoreId(storeId);
+```
+
+DynamoDB es un servicio de base de datos NoSQL administrado por AWS, altamente escalable, ideal para almacenar colecciones de productos por tienda.
+
+### Renderizado de secciones con LiquidJS
+
+Fasttify usa **LiquidJS** para procesar plantillas Liquid en Node.js. Se crea un motor Liquid y se carga cada archivo de sección almacenado en un bucket S3 (por ejemplo `fasttify-templates`). AWS S3 es un servicio de almacenamiento de objetos perfecto para archivos estáticos. Un ejemplo de función para cargar la plantilla de S3 podría ser:
+
+```ts
+import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
+import { Liquid } from "liquidjs";
+
+const s3 = new S3Client({ region: "us-east-1" });
+const liquid = new Liquid();
+
+// Función auxiliar: obtener texto de plantilla desde S3
+async function loadTemplateFromS3(bucket: string, key: string): Promise<string> {
+  const response = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+  return await response.Body.transformToString();
+}
+
+const sectionsHtml: string[] = [];
+for (const sectionId of layoutJSON.order) {
+  const sectionDef = layoutJSON.sections[sectionId];
+  const sectionKey = `sections/${sectionDef.type}.liquid`;
+  const sectionTpl = await loadTemplateFromS3("fasttify-templates", sectionKey);
+  // Renderizar con LiquidJS pasando la configuración y datos
+  const html = await liquid.parseAndRender(sectionTpl, {
+    section: sectionDef.settings,
+    blocks: sectionDef.blocks,
+    products,
+    collections
+  });
+  sectionsHtml.push(html);
+}
+```
+
+Este código recorre las secciones según `layoutJSON.order`. Por cada sección obtiene su plantilla Liquid (`*.liquid`) desde S3 y la renderiza usando `liquid.parseAndRender`. Se pasan como contexto los ajustes de la sección (`section.settings`), los bloques (`section.blocks`), y los datos de `products` y `collections`. De esta forma se genera el HTML parcial de cada sección.  (El sitio oficial de LiquidJS muestra un ejemplo similar: al crear un motor Liquid, llamar a `engine.renderFile("hello", {name: 'alice'})` lee y renderiza `hello.liquid`.)
+
+### Renderizado del layout base
+
+Tras generar las secciones individuales, se carga el layout base desde S3 (por ejemplo `layout/theme.liquid`) y se renderiza, inyectando el contenido de las secciones. Por ejemplo:
+
+```ts
+const layoutKey = `layout/${layoutJSON.layout || "theme"}.liquid`;
+const layoutTpl = await loadTemplateFromS3("fasttify-templates", layoutKey);
+const finalHtml = await liquid.parseAndRender(layoutTpl, {
+  content_for_layout: sectionsHtml.join(""), // inserta las secciones juntas
+  store: storeData,
+  products,
+  collections
+});
+```
+
+En el layout base, el marcador `{{ content_for_layout }}` se reemplaza por la concatenación de todas las secciones renderizadas. El resultado `finalHtml` es el HTML completo que se envía al cliente. De esta forma, el layout base actúa como esqueleto general (cabecera, pie, etc.) y las secciones aportan el contenido específico de la página.
+
+### Datos de productos y colecciones
+
+Los modelos **Product** y **Collection** se consultan filtrando por `storeId`. Por ejemplo, usamos `cookiesClient.models.Product.listProductsByStoreId(storeId)` para obtener todos los productos de la tienda desde DynamoDB, y de manera similar para las colecciones. Estos datos se pasan al contexto de Liquid para que las secciones puedan mostrarlos (por ejemplo, una sección de productos destacados recorrerá el arreglo `products` o `collections`).
+
+## Ejemplo de sección en un archivo `.liquid`
+
+A modo de ilustración, supongamos una sección `sections/featured-products.liquid` que muestra los productos de una colección. El código podría ser:
+
+```liquid
+<div class="featured-products">
+  {% for prodId in collections['nuevos'].productIds %}
+    <div class="product">
+      <h2>{{ products[prodId].title }}</h2>
+      <p>{{ products[prodId].description }}</p>
+    </div>
+  {% endfor %}
+</div>
+
+{% schema %}
+{
+  "name": "Productos Destacados",
+  "settings": [
+    { "type": "text",       "id": "section_title", "label": "Título de sección", "default": "Nuevos Productos" },
+    { "type": "collection", "id": "collection",    "label": "Colección",        "default": "nuevos" }
+  ]
+}
+{% endschema %}
+```
+
+En este ejemplo, la sección recorre los IDs de productos de la colección `"nuevos"`. El bloque `{% schema %}` define las configuraciones de la sección: aquí un título (`section_title`) y la colección a usar (`collection`). Fasttify leerá estos valores y los pasará a `section.settings` para generar el contenido final.
+
+## Conclusión
+
+Fasttify implementa un flujo headless completo donde cada petición determina la tienda por subdominio, obtiene su configuración de tema (layout y secciones) desde la base de datos, renderiza dinámicamente las secciones Liquid almacenadas en S3, e inyecta los datos de productos/colecciones desde DynamoDB. Esto permite crear tiendas altamente personalizables y escalables aprovechando tecnologías modernas (Next.js SSR, LiquidJS, AWS S3 y DynamoDB) y el modelo de temas modulares de Shopify 2.0.
