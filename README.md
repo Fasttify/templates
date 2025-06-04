@@ -17,7 +17,7 @@ Este fragmento de Next.js (App Router) extrae el dominio actual. A continuación
 ```ts
 import { cookiesClient } from '@/utils/AmplifyUtils'
 
-async function checkDomaint(customDomain: string) {
+async function checkDomain(customDomain: string) {
   try {
     const { data: stores } = await cookiesClient.models.UserStore.listUserStoreByCustomDomain({
       customDomain: customDomain,
