@@ -34,7 +34,7 @@ En este ejemplo la sección **Hero** define un encabezado y un párrafo que usan
 
 ## Detección de la tienda por dominio
 
-Al llegar una petición a Fasttify, se determina la tienda activa a partir del dominio o subdominio de la URL. En Next.js esto se suele hacer en `getServerSideProps`, leyendo la cabecera `Host`. Por ejemplo:
+Al llegar una petición a Fasttify, se determina la tienda activa a partir del dominio o subdominio de la URL. En Next.js esto se suele hacer en `headers().get('host')`, leyendo la cabecera `Host`. Por ejemplo:
 
 ```ts
   import { headers } from 'next/headers';
