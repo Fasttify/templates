@@ -15,13 +15,13 @@ const host = headers().get('host');  // p.ej. 'tienda1.fasttify.com'
 Este fragmento de Next.js (App Router) extrae el dominio actual. A continuación, Fasttify consulta la tabla **UserStore** en DynamoDB usando un índice secundario global (GSI) sobre el campo `customDomain`. Un ejemplo de query en TypeScript podría ser:
 
 ```ts
-const params = {
-  TableName: "UserStore",
-  IndexName: "customDomain-index",
-  KeyConditionExpression: "customDomain = :domain",
-  ExpressionAttributeValues: { ":domain": { S: host } }
-};
-const data = await ddbClient.send(new QueryCommand(params));
+import { cookiesClient } from '@/utils/AmplifyUtils'
+
+async function checkDomaint(customDomain: string) {
+  try {
+    const { data: stores } = await cookiesClient.models.UserStore.listUserStoreByCustomDomain({
+      customDomain: customDomain,
+    })
 ```
 
 En este ejemplo se especifica `IndexName: "customDomain-index"` para indicar el GSI apropiado. El resultado devuelve el registro de la tienda asociada a ese dominio, que incluye el `storeId` y la configuración de onboarding. (Usar un **Global Secondary Index** es una práctica común en DynamoDB para consultas rápidas por un atributo no clave, como `customDomain`.)
